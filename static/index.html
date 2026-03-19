@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="fr">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>YouTube Transcriber</title>
+        <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+        <link rel="stylesheet" href="/static/style.css" />
+    </head>
+    <body>
+        <div id="svg-icons"></div>
+
+        <div class="layout">
+            <header class="topbar">
+                <div class="logo-mark">
+                    <svg><use href="#ic-mic" /></svg>
+                </div>
+                <h1>YouTube Transcriber <span class="version">v2</span></h1>
+                <div class="topbar-status">
+                    <div
+                        class="spinner"
+                        id="global-spinner"
+                        style="display: none"
+                    ></div>
+                    <span class="ws-dot" id="ws-dot"></span>
+                    <span id="ws-label">connexion…</span>
+                </div>
+            </header>
+
+            <aside class="sidebar">
+                <nav>
+                    <div class="nav-label">Transcription</div>
+                    <button
+                        class="nav-item active"
+                        onclick="showPanel('single')"
+                        id="nav-single"
+                    >
+                        <svg><use href="#ic-play" /></svg> Vidéo unique
+                    </button>
+                    <button
+                        class="nav-item"
+                        onclick="showPanel('channel')"
+                        id="nav-channel"
+                    >
+                        <svg><use href="#ic-tv" /></svg> Chaîne entière
+                    </button>
+                    <button
+                        class="nav-item"
+                        onclick="showPanel('queue')"
+                        id="nav-queue"
+                    >
+                        <svg><use href="#ic-clock" /></svg> File d'attente
+                        <span class="badge" id="queue-badge">0</span>
+                    </button>
+                    <div class="nav-label">Bibliothèque</div>
+                    <button
+                        class="nav-item"
+                        onclick="showPanel('history')"
+                        id="nav-history"
+                    >
+                        <svg><use href="#ic-list" /></svg> Historique
+                    </button>
+                    <button
+                        class="nav-item"
+                        onclick="showPanel('search')"
+                        id="nav-search"
+                    >
+                        <svg><use href="#ic-search" /></svg> Recherche
+                    </button>
+                </nav>
+            </aside>
+
+            <main class="main">
+                <!-- Vidéo unique -->
+                <div class="panel active" id="panel-single">
+                    <div class="panel-title">Vidéo unique</div>
+                    <div class="panel-sub">
+                        Colle une URL YouTube pour lancer la transcription.
+                    </div>
+                    <div class="card">
+                        <div class="field">
+                            <label>URL YouTube</label>
+                            <input
+                                type="text"
+                                id="single-url"
+                                placeholder="https://www.youtube.com/watch?v=..."
+                            />
+                        </div>
+                        <div class="row row-2">
+                            <div>
+                                <label>Modèle Whisper</label>
+                                <select id="single-model">
+                                    <option value="tiny">
+                                        tiny — très rapide
+                                    </option>
+                                    <option value="base">base</option>
+                                    <option value="small" selected>
+                                        small — recommandé
+                                    </option>
+                                    <option value="medium">
+                                        medium — précis (5 Go VRAM)
+                                    </option>
+                                    <option value="large-v3">
+                                        large-v3 — max (10 Go VRAM)
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Langue</label>
+                                <select id="single-lang">
+                                    <option value="auto">auto-détection</option>
+                                    <option value="fr">Français</option>
+                                    <option value="en">English</option>
+                                    <option value="es">Español</option>
+                                    <option value="de">Deutsch</option>
+                                    <option value="it">Italiano</option>
+                                    <option value="pt">Português</option>
+                                    <option value="ja">日本語</option>
+                                    <option value="zh">中文</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button
+                            class="btn btn-primary"
+                            onclick="enqueueSingle()"
+                        >
+                            <svg><use href="#ic-zap" /></svg> Transcrire
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Chaîne entière -->
+                <div class="panel" id="panel-channel">
+                    <div class="panel-title">Chaîne entière</div>
+                    <div class="panel-sub">
+                        Récupère la liste des vidéos d'une chaîne, sélectionne
+                        celles à transcrire.
+                    </div>
+                    <div class="card">
+                        <div class="field">
+                            <label>URL de la chaîne</label>
+                            <input
+                                type="text"
+                                id="channel-url"
+                                placeholder="https://www.youtube.com/@NomDeLaChaine"
+                            />
+                        </div>
+                        <div class="row row-2">
+                            <div>
+                                <label>Modèle Whisper</label>
+                                <select id="channel-model">
+                                    <option value="tiny">tiny</option>
+                                    <option value="base">base</option>
+                                    <option value="small" selected>
+                                        small — recommandé
+                                    </option>
+                                    <option value="medium">medium</option>
+                                    <option value="large-v3">large-v3</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Langue</label>
+                                <select id="channel-lang">
+                                    <option value="auto">auto-détection</option>
+                                    <option value="fr">Français</option>
+                                    <option value="en">English</option>
+                                    <option value="es">Español</option>
+                                    <option value="de">Deutsch</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button
+                            class="btn btn-primary"
+                            id="fetch-btn"
+                            onclick="fetchChannel()"
+                        >
+                            <svg><use href="#ic-search" /></svg> Charger les
+                            vidéos
+                        </button>
+                    </div>
+
+                    <div id="channel-results" style="display: none">
+                        <div class="channel-toolbar">
+                            <strong id="channel-name"></strong>
+                            <span id="channel-count"></span>
+                            <button
+                                class="btn btn-ghost btn-sm"
+                                onclick="selectAll()"
+                                style="margin-left: auto"
+                            >
+                                Tout sélectionner
+                            </button>
+                            <button
+                                class="btn btn-ghost btn-sm"
+                                onclick="selectNone()"
+                            >
+                                Tout désélectionner
+                            </button>
+                        </div>
+                        <div class="videos-grid" id="videos-grid"></div>
+                        <div class="select-bar">
+                            <span id="selected-count"
+                                >0 vidéo sélectionnée</span
+                            >
+                            <button
+                                class="btn btn-primary"
+                                id="enqueue-batch-btn"
+                                onclick="enqueueBatch()"
+                                disabled
+                            >
+                                <svg><use href="#ic-zap" /></svg> Transcrire la
+                                sélection
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File d'attente -->
+                <div class="panel" id="panel-queue">
+                    <div class="panel-title">File d'attente</div>
+                    <div class="panel-sub">
+                        Progression en temps réel de toutes les transcriptions.
+                    </div>
+                    <div class="job-list" id="job-list">
+                        <div class="empty">
+                            <svg><use href="#ic-clock" /></svg>
+                            <p>Aucun job en cours.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Historique -->
+                <div class="panel" id="panel-history">
+                    <div class="panel-title">Historique</div>
+                    <div class="panel-sub">
+                        Toutes les transcriptions sauvegardées.
+                    </div>
+                    <div class="hist-list" id="hist-list">
+                        <div class="empty">
+                            <svg><use href="#ic-list" /></svg>
+                            <p>Aucune transcription.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recherche -->
+                <div class="panel" id="panel-search">
+                    <div class="panel-title">Recherche</div>
+                    <div class="panel-sub">
+                        Recherche plein-texte dans toutes les transcriptions.
+                    </div>
+                    <div class="search-bar">
+                        <input
+                            type="search"
+                            id="search-input"
+                            placeholder="Rechercher un mot, une phrase…"
+                            onkeydown="if (event.key === 'Enter') doSearch();"
+                        />
+                        <button class="btn btn-primary" onclick="doSearch()">
+                            <svg><use href="#ic-search" /></svg> Rechercher
+                        </button>
+                    </div>
+                    <div class="search-results" id="search-results"></div>
+                </div>
+
+                <!-- Viewer -->
+                <div class="panel" id="panel-viewer">
+                    <button
+                        class="btn btn-ghost btn-sm back-btn"
+                        onclick="goBack()"
+                    >
+                        <svg><use href="#ic-arrow-left" /></svg> Retour
+                    </button>
+                    <div class="viewer-header">
+                        <div class="viewer-title" id="viewer-title"></div>
+                        <div class="viewer-meta" id="viewer-meta"></div>
+                    </div>
+                    <div class="viewer-actions" id="viewer-actions"></div>
+                    <div class="tabs">
+                        <div class="tab active" onclick="switchTab('text')">
+                            Texte complet
+                        </div>
+                        <div class="tab" onclick="switchTab('segments')">
+                            Segments
+                        </div>
+                        <button
+                            class="btn btn-ghost btn-sm copy-btn"
+                            id="copy-btn"
+                            onclick="copyText()"
+                            style="margin-left: auto; align-self: center"
+                        >
+                            <svg><use href="#ic-copy" /></svg> Copier
+                        </button>
+                    </div>
+                    <div class="tab-content active" id="tab-text">
+                        <div class="full-text" id="viewer-text"></div>
+                    </div>
+                    <div class="tab-content" id="tab-segments">
+                        <div class="seg-list" id="viewer-segments"></div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <div id="toast">
+            <svg id="toast-icon"><use href="#ic-ok" /></svg>
+            <span id="toast-msg"></span>
+        </div>
+
+        <script>
+            // Charge icons.svg et l'injecte dans le DOM pour que les <use href="#..."> fonctionnent
+            fetch("/static/icons.svg")
+                .then((r) => r.text())
+                .then((svg) => {
+                    document.getElementById("svg-icons").innerHTML = svg;
+                });
+        </script>
+        <script src="/static/app.js"></script>
+    </body>
+</html>
