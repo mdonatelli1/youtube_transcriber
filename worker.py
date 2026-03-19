@@ -1,10 +1,11 @@
 """
-worker.py — File d'attente de transcription.
-Chaque job tourne dans un thread séparé et envoie sa progression
-via une queue asyncio que FastAPI lit via WebSocket.
+worker.py — File d'attente de transcription (un seul job actif à la fois).
+Les jobs sont traités séquentiellement via une queue threading.Queue.
+La progression est poussée via une queue asyncio vers les WebSockets.
 """
 
 import asyncio
+import queue
 import threading
 from dataclasses import dataclass
 
@@ -30,12 +31,19 @@ class Job:
     transcript_id: int | None = None
 
 
-# File globale des jobs (accessible depuis main.py)
+# ── State global ──────────────────────────────────────────────────────────────
+
 _jobs: dict[str, Job] = {}
 _jobs_lock = threading.Lock()
 
+# File d'attente FIFO — un seul worker thread la consomme
+_job_queue: queue.Queue = queue.Queue()
+
 # Queue asyncio pour pousser les mises à jour vers les WebSockets
 _update_queue: asyncio.Queue | None = None
+
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
 
 
 def set_update_queue(q: asyncio.Queue):
@@ -44,7 +52,7 @@ def set_update_queue(q: asyncio.Queue):
 
 
 def _push(job: Job):
-    """Envoie une mise à jour de job dans la queue asyncio (thread-safe)."""
+    """Envoie une mise à jour dans la queue asyncio (thread-safe)."""
     if _update_queue:
         _update_queue.put_nowait(
             {
@@ -56,6 +64,26 @@ def _push(job: Job):
                 "transcript_id": job.transcript_id,
             }
         )
+
+
+# ── Worker thread (tourne en continu, traite un job à la fois) ───────────────
+
+
+def _worker_loop():
+    while True:
+        job = _job_queue.get()  # bloquant jusqu'au prochain job
+        try:
+            _run_job(job)
+        finally:
+            _job_queue.task_done()
+
+
+# Démarrage du thread unique au chargement du module
+_worker_thread = threading.Thread(target=_worker_loop, daemon=True)
+_worker_thread.start()
+
+
+# ── API publique ──────────────────────────────────────────────────────────────
 
 
 def get_all_jobs() -> list[dict]:
@@ -74,16 +102,19 @@ def get_all_jobs() -> list[dict]:
 
 
 def enqueue(job: Job):
+    """Ajoute un job en file — il sera traité dès que le worker est libre."""
     with _jobs_lock:
         _jobs[job.job_id] = job
     _push(job)
-    t = threading.Thread(target=_run_job, args=(job,), daemon=True)
-    t.start()
+    _job_queue.put(job)
+
+
+# ── Pipeline d'un job ─────────────────────────────────────────────────────────
 
 
 def _run_job(job: Job):
     try:
-        # ── 1. Fetch metadata ────────────────────────────────────────────────
+        # 1. Métadonnées
         job.status = "downloading"
         job.progress_msg = "Récupération des métadonnées…"
         _push(job)
@@ -95,12 +126,12 @@ def _run_job(job: Job):
             job.video_id = info.get("id", "")
         _push(job)
 
-        # ── 2. Download ──────────────────────────────────────────────────────
+        # 2. Téléchargement
         job.progress_msg = "Téléchargement de l'audio…"
         _push(job)
         audio_path = download_audio(job.url)
 
-        # ── 3. Transcribe ────────────────────────────────────────────────────
+        # 3. Transcription
         job.status = "transcribing"
         job.progress_msg = "Transcription en cours…"
         _push(job)
@@ -110,7 +141,7 @@ def _run_job(job: Job):
         )
         audio_path.unlink(missing_ok=True)
 
-        # ── 4. Save ──────────────────────────────────────────────────────────
+        # 4. Sauvegarde
         duration = result["segments"][-1]["end"] if result["segments"] else 0
         tid = save_transcript(
             {
@@ -138,14 +169,14 @@ def _run_job(job: Job):
         _push(job)
 
 
-# ── Récupération des vidéos d'une chaîne ────────────────────────────────────
+# ── Récupération des vidéos d'une chaîne ─────────────────────────────────────
 
 
 def fetch_channel_videos(channel_url: str) -> list[dict]:
     """
     Retourne la liste des vidéos d'une chaîne YouTube.
     Gère le cas où YouTube retourne des sous-playlists (Videos, Shorts…)
-    en ne gardant que les vraies vidéos (durée > 0, pas les Shorts).
+    en ne gardant que les vraies vidéos (durée > 60s).
     """
     ydl_opts = {
         "quiet": True,
@@ -158,14 +189,12 @@ def fetch_channel_videos(channel_url: str) -> list[dict]:
 
     raw_entries = info.get("entries", [])
 
-    # YouTube renvoie parfois des sous-playlists (Videos, Shorts, Live…)
-    # On descend d'un niveau si les entrées sont elles-mêmes des playlists
+    # Descend dans les sous-playlists si nécessaire (Videos, Shorts, Live…)
     flat = []
     for e in raw_entries:
         if not e:
             continue
         if e.get("_type") == "playlist" or not e.get("id"):
-            # C'est une sous-playlist — on prend ses entrées si disponibles
             for sub in e.get("entries", []):
                 if sub:
                     flat.append(sub)
@@ -178,7 +207,6 @@ def fetch_channel_videos(channel_url: str) -> list[dict]:
         vid_id = e.get("id", "")
         if not vid_id or vid_id in seen:
             continue
-        # Exclure les Shorts (durée <= 60s quand disponible)
         duration = e.get("duration")
         if duration is not None and duration <= 60:
             continue
