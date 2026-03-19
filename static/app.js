@@ -139,7 +139,7 @@ function renderVideosGrid(videos) {
     videos.forEach((v) => {
         const card = document.createElement("div");
         card.className = "video-card";
-        card.dataset.id = v.id;
+        card.dataset.id = String(v.id);
         card.innerHTML = `
       <div class="video-thumb">
         ${
@@ -153,17 +153,18 @@ function renderVideosGrid(videos) {
         <div class="video-title">${esc(v.title)}</div>
         <div class="video-date">${fmtDate(v.upload_date)}</div>
       </div>`;
-        card.onclick = () => toggleVideo(card, v.id);
+        card.onclick = () => toggleVideo(card, String(v.id));
         grid.appendChild(card);
     });
 }
 
 function toggleVideo(card, id) {
-    if (selectedVideos.has(id)) {
-        selectedVideos.delete(id);
+    const sid = String(id);
+    if (selectedVideos.has(sid)) {
+        selectedVideos.delete(sid);
         card.classList.remove("selected");
     } else {
-        selectedVideos.add(id);
+        selectedVideos.add(sid);
         card.classList.add("selected");
     }
     updateSelectBar();
@@ -171,7 +172,7 @@ function toggleVideo(card, id) {
 
 function selectAll() {
     document.querySelectorAll(".video-card").forEach((c) => {
-        selectedVideos.add(c.dataset.id);
+        selectedVideos.add(String(c.dataset.id));
         c.classList.add("selected");
     });
     updateSelectBar();

@@ -144,28 +144,51 @@ def _run_job(job: Job):
 def fetch_channel_videos(channel_url: str) -> list[dict]:
     """
     Retourne la liste des vidéos d'une chaîne YouTube.
-    Chaque entrée : {id, title, url, duration, thumbnail, upload_date}
+    Gère le cas où YouTube retourne des sous-playlists (Videos, Shorts…)
+    en ne gardant que les vraies vidéos (durée > 0, pas les Shorts).
     """
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
-        "extract_flat": True,  # Ne télécharge pas, récupère juste la liste
-        "playlistend": 200,  # Max 200 vidéos
+        "extract_flat": "in_playlist",
+        "playlistend": 200,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(channel_url, download=False)
 
-    entries = info.get("entries", [])
-    videos = []
-    for e in entries:
+    raw_entries = info.get("entries", [])
+
+    # YouTube renvoie parfois des sous-playlists (Videos, Shorts, Live…)
+    # On descend d'un niveau si les entrées sont elles-mêmes des playlists
+    flat = []
+    for e in raw_entries:
         if not e:
             continue
+        if e.get("_type") == "playlist" or not e.get("id"):
+            # C'est une sous-playlist — on prend ses entrées si disponibles
+            for sub in e.get("entries", []):
+                if sub:
+                    flat.append(sub)
+        else:
+            flat.append(e)
+
+    videos = []
+    seen = set()
+    for e in flat:
+        vid_id = e.get("id", "")
+        if not vid_id or vid_id in seen:
+            continue
+        # Exclure les Shorts (durée <= 60s quand disponible)
+        duration = e.get("duration")
+        if duration is not None and duration <= 60:
+            continue
+        seen.add(vid_id)
         videos.append(
             {
-                "id": e.get("id", ""),
+                "id": vid_id,
                 "title": e.get("title", "Sans titre"),
-                "url": f"https://www.youtube.com/watch?v={e.get('id', '')}",
-                "duration": e.get("duration"),
+                "url": f"https://www.youtube.com/watch?v={vid_id}",
+                "duration": duration,
                 "thumbnail": e.get("thumbnail", ""),
                 "upload_date": e.get("upload_date", ""),
             }
