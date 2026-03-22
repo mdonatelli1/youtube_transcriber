@@ -22,15 +22,13 @@ db.init_db()
 app = FastAPI(title="YouTube Transcriber")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Queue asyncio partagée avec le worker
 _update_queue: asyncio.Queue = asyncio.Queue()
 worker.set_update_queue(_update_queue)
 
-# WebSocket clients connectés
 _ws_clients: list[WebSocket] = []
 
 
-# ── WebSocket — diffuse les mises à jour en temps réel ───────────────────────
+# ── WebSocket ─────────────────────────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
@@ -43,7 +41,6 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 async def _broadcast_loop():
-    """Tâche de fond : vide la queue et envoie à tous les clients WS."""
     while True:
         try:
             msg = _update_queue.get_nowait()
@@ -74,18 +71,13 @@ async def index():
 # ── API — File d'attente ──────────────────────────────────────────────────────
 class EnqueueRequest(BaseModel):
     url: str
-    model: str = "small"
-    language: str = "auto"
 
 
 @app.post("/api/enqueue")
 async def enqueue(req: EnqueueRequest):
-    lang = None if req.language == "auto" else req.language
     job = worker.Job(
         job_id=str(uuid.uuid4())[:8],
         url=req.url,
-        model=req.model,
-        language=lang,
     )
     worker.enqueue(job)
     return {"job_id": job.job_id}
@@ -111,22 +103,17 @@ async def channel_videos(req: ChannelRequest):
 
 
 class BatchRequest(BaseModel):
-    video_ids: list[str]  # liste d'IDs YouTube
-    model: str = "small"
-    language: str = "auto"
+    video_ids: list[str]
 
 
 @app.post("/api/channel/enqueue-batch")
 async def enqueue_batch(req: BatchRequest):
-    lang = None if req.language == "auto" else req.language
     job_ids = []
     for vid_id in req.video_ids:
         url = f"https://www.youtube.com/watch?v={vid_id}"
         job = worker.Job(
             job_id=str(uuid.uuid4())[:8],
             url=url,
-            model=req.model,
-            language=lang,
         )
         worker.enqueue(job)
         job_ids.append(job.job_id)

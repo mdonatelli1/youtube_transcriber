@@ -1,19 +1,18 @@
 """
-worker.py — File d'attente de transcription (un seul job actif à la fois).
-Les jobs sont traités séquentiellement via une queue threading.Queue.
-La progression est poussée via une queue asyncio vers les WebSockets.
+worker.py — File d'attente d'extraction de sous-titres YouTube.
 """
 
 import asyncio
+import json as _json
 import queue
+import re
 import threading
+import urllib.request
 from dataclasses import dataclass
 
 import yt_dlp
 
 from database import save_transcript
-from downloader import download_audio
-from transcriber import transcribe_audio
 
 
 @dataclass
@@ -23,9 +22,7 @@ class Job:
     title: str = ""
     channel: str = ""
     video_id: str = ""
-    model: str = "small"
-    language: str | None = None
-    status: str = "pending"  # pending | downloading | transcribing | done | error
+    status: str = "pending"  # pending | fetching | done | error
     progress_msg: str = ""
     error: str = ""
     transcript_id: int | None = None
@@ -36,11 +33,22 @@ class Job:
 _jobs: dict[str, Job] = {}
 _jobs_lock = threading.Lock()
 
-# File d'attente FIFO — un seul worker thread la consomme
 _job_queue: queue.Queue = queue.Queue()
-
-# Queue asyncio pour pousser les mises à jour vers les WebSockets
 _update_queue: asyncio.Queue | None = None
+
+_PREFERRED_LANGS = ["fr", "en"]
+
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept": "*/*",
+    "Referer": "https://www.youtube.com/",
+    "Origin": "https://www.youtube.com",
+}
 
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -52,7 +60,6 @@ def set_update_queue(q: asyncio.Queue):
 
 
 def _push(job: Job):
-    """Envoie une mise à jour dans la queue asyncio (thread-safe)."""
     if _update_queue:
         _update_queue.put_nowait(
             {
@@ -66,19 +73,18 @@ def _push(job: Job):
         )
 
 
-# ── Worker thread (tourne en continu, traite un job à la fois) ───────────────
+# ── Worker thread ─────────────────────────────────────────────────────────────
 
 
 def _worker_loop():
     while True:
-        job = _job_queue.get()  # bloquant jusqu'au prochain job
+        job = _job_queue.get()
         try:
             _run_job(job)
         finally:
             _job_queue.task_done()
 
 
-# Démarrage du thread unique au chargement du module
 _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
 _worker_thread.start()
 
@@ -102,7 +108,6 @@ def get_all_jobs() -> list[dict]:
 
 
 def enqueue(job: Job):
-    """Ajoute un job en file — il sera traité dès que le worker est libre."""
     with _jobs_lock:
         _jobs[job.job_id] = job
     _push(job)
@@ -114,34 +119,31 @@ def enqueue(job: Job):
 
 def _run_job(job: Job):
     try:
-        # 1. Métadonnées
-        job.status = "downloading"
+        job.status = "fetching"
         job.progress_msg = "Récupération des métadonnées…"
         _push(job)
 
         with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
             info = ydl.extract_info(job.url, download=False)
-            job.title = info.get("title", job.url)
-            job.channel = info.get("uploader", "")
-            job.video_id = info.get("id", "")
+
+        job.title = info.get("title", job.url)
+        job.channel = info.get("uploader", "")
+        job.video_id = info.get("id", "")
+        job.progress_msg = "Récupération des sous-titres…"
         _push(job)
 
-        # 2. Téléchargement
-        job.progress_msg = "Téléchargement de l'audio…"
-        _push(job)
-        audio_path = download_audio(job.url)
+        sub_url, sub_lang = _pick_subtitle(info)
+        if not sub_url:
+            raise ValueError("Aucun sous-titre disponible pour cette vidéo.")
 
-        # 3. Transcription
-        job.status = "transcribing"
-        job.progress_msg = "Transcription en cours…"
-        _push(job)
+        req = urllib.request.Request(sub_url, headers=_HEADERS)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = _json.loads(r.read())
 
-        result = transcribe_audio(
-            audio_path, model_size=job.model, language=job.language
-        )
-        audio_path.unlink(missing_ok=True)
+        result = _parse_json3(raw, sub_lang)
+        if not result:
+            raise ValueError("Sous-titres vides ou illisibles.")
 
-        # 4. Sauvegarde
         duration = result["segments"][-1]["end"] if result["segments"] else 0
         tid = save_transcript(
             {
@@ -149,8 +151,6 @@ def _run_job(job: Job):
                 "title": job.title,
                 "channel": job.channel,
                 "url": job.url,
-                "language": result.get("language", ""),
-                "model": job.model,
                 "full_text": result["text"],
                 "segments": result["segments"],
                 "duration": duration,
@@ -169,15 +169,56 @@ def _run_job(job: Job):
         _push(job)
 
 
+# ── Sélection et parsing des sous-titres ─────────────────────────────────────
+
+
+def _pick_subtitle(info: dict) -> tuple[str | None, str | None]:
+    """Retourne (url_json3, lang) — manuels > automatiques, fr > en > premier dispo."""
+    for source in (info.get("subtitles", {}), info.get("automatic_captions", {})):
+        for lang in _PREFERRED_LANGS:
+            result = _get_json3_url(source, lang)
+            if result:
+                return result
+        for lang in source:
+            result = _get_json3_url(source, lang)
+            if result:
+                return result
+    return None, None
+
+
+def _get_json3_url(source: dict, lang: str) -> tuple[str, str] | None:
+    entry = next((e for e in source.get(lang, []) if e.get("ext") == "json3"), None)
+    if entry and entry.get("url"):
+        return entry["url"], lang
+    return None
+
+
+def _parse_json3(raw: dict, lang: str) -> dict | None:
+    segments = []
+    full_parts = []
+
+    for event in raw.get("events", []):
+        if "segs" not in event:
+            continue
+        start = event["tStartMs"] / 1000
+        dur = event.get("dDurationMs", 0) / 1000
+        text = "".join(s.get("utf8", "") for s in event["segs"]).strip()
+        text = re.sub(r"\s+", " ", text)
+        if not text or text == "\n":
+            continue
+        segments.append({"start": start, "end": start + dur, "text": text})
+        full_parts.append(text)
+
+    if not segments:
+        return None
+
+    return {"text": " ".join(full_parts), "segments": segments, "language": lang}
+
+
 # ── Récupération des vidéos d'une chaîne ─────────────────────────────────────
 
 
 def fetch_channel_videos(channel_url: str) -> list[dict]:
-    """
-    Retourne la liste des vidéos d'une chaîne YouTube.
-    Gère le cas où YouTube retourne des sous-playlists (Videos, Shorts…)
-    en ne gardant que les vraies vidéos (durée > 60s).
-    """
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -187,17 +228,12 @@ def fetch_channel_videos(channel_url: str) -> list[dict]:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(channel_url, download=False)
 
-    raw_entries = info.get("entries", [])
-
-    # Descend dans les sous-playlists si nécessaire (Videos, Shorts, Live…)
     flat = []
-    for e in raw_entries:
+    for e in info.get("entries", []):
         if not e:
             continue
         if e.get("_type") == "playlist" or not e.get("id"):
-            for sub in e.get("entries", []):
-                if sub:
-                    flat.append(sub)
+            flat.extend(sub for sub in e.get("entries", []) if sub)
         else:
             flat.append(e)
 

@@ -74,8 +74,6 @@ function goBack() {
 // ── Single enqueue ────────────────────────────────────────────────────────────
 async function enqueueSingle() {
     const url = document.getElementById("single-url").value.trim();
-    const model = document.getElementById("single-model").value;
-    const lang = document.getElementById("single-lang").value;
     if (!url) {
         toast("URL manquante", "alert");
         return;
@@ -84,7 +82,7 @@ async function enqueueSingle() {
     const res = await fetch("/api/enqueue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, model, language: lang }),
+        body: JSON.stringify({ url }),
     });
     const data = await res.json();
     jobs[data.job_id] = {
@@ -194,14 +192,12 @@ function updateSelectBar() {
 }
 
 async function enqueueBatch() {
-    const model = document.getElementById("channel-model").value;
-    const lang = document.getElementById("channel-lang").value;
     const ids = [...selectedVideos];
 
     const res = await fetch("/api/channel/enqueue-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ video_ids: ids, model, language: lang }),
+        body: JSON.stringify({ video_ids: ids }),
     });
     const data = await res.json();
 
@@ -278,7 +274,7 @@ async function loadHistory() {
       <div class="hist-info">
         <div class="hist-title">${esc(t.title || t.video_id)}</div>
         <div class="hist-meta">
-          ${esc(t.channel || "")} · ${t.word_count} mots · ${(t.language || "").toUpperCase()} · ${fmtDatetime(t.created_at)}
+          ${esc(t.channel || "")} · ${t.word_count} mots · ${fmtDatetime(t.created_at)}
         </div>
       </div>
       <div class="hist-actions" onclick="event.stopPropagation()">
@@ -310,13 +306,13 @@ async function viewTranscript(id, from) {
 
     document.getElementById("viewer-title").textContent = t.title || t.video_id;
     document.getElementById("viewer-meta").textContent =
-        `${t.channel || ""} · ${t.word_count} mots · ${(t.language || "").toUpperCase()} · modèle: ${t.model}`;
+        `${t.channel || ""} · ${t.word_count} mots · ${fmtDatetime(t.created_at)}`;
 
     document.getElementById("viewer-actions").innerHTML = `
-    <a class="btn btn-ghost btn-sm" href="/api/transcript/${id}/export/txt"  download>
+    <a class="btn btn-ghost btn-sm" href="/api/transcript/${id}/export/txt" download>
       <svg><use href="#ic-download"/></svg> TXT
     </a>
-    <a class="btn btn-ghost btn-sm" href="/api/transcript/${id}/export/srt"  download>
+    <a class="btn btn-ghost btn-sm" href="/api/transcript/${id}/export/srt" download>
       <svg><use href="#ic-download"/></svg> SRT
     </a>
     <a class="btn btn-ghost btn-sm" href="/api/transcript/${id}/export/json" download>

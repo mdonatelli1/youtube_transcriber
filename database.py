@@ -24,8 +24,6 @@ def init_db():
                 title       TEXT,
                 channel     TEXT,
                 url         TEXT,
-                language    TEXT,
-                model       TEXT,
                 full_text   TEXT,
                 segments    TEXT,       -- JSON
                 duration    REAL,
@@ -56,16 +54,14 @@ def save_transcript(data: dict) -> int:
         cur = conn.execute(
             """
             INSERT INTO transcripts
-                (video_id, title, channel, url, language, model, full_text, segments, duration, word_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+                (video_id, title, channel, url, full_text, segments, duration, word_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
                 data["video_id"],
                 data.get("title", ""),
                 data.get("channel", ""),
                 data.get("url", ""),
-                data.get("language", ""),
-                data.get("model", ""),
                 data.get("full_text", ""),
                 json.dumps(data.get("segments", []), ensure_ascii=False),
                 data.get("duration", 0),
@@ -79,12 +75,11 @@ def get_history(limit: int = 50) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT id, video_id, title, channel, url, language, model,
-                   word_count, duration, created_at
+            SELECT id, video_id, title, channel, url, word_count, duration, created_at
             FROM transcripts
             ORDER BY created_at DESC
             LIMIT ?
-        """,
+            """,
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -107,14 +102,14 @@ def search_transcripts(query: str) -> list[dict]:
         rows = conn.execute(
             """
             SELECT t.id, t.video_id, t.title, t.channel, t.url,
-                   t.language, t.word_count, t.created_at,
+                   t.word_count, t.created_at,
                    snippet(transcripts_fts, 3, '<mark>', '</mark>', '…', 20) AS snippet
             FROM transcripts_fts
             JOIN transcripts t ON t.id = transcripts_fts.rowid
             WHERE transcripts_fts MATCH ?
             ORDER BY rank
             LIMIT 30
-        """,
+            """,
             (query,),
         ).fetchall()
     return [dict(r) for r in rows]

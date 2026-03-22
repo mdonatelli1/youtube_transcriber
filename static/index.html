@@ -75,7 +75,8 @@
                 <div class="panel active" id="panel-single">
                     <div class="panel-title">Vidéo unique</div>
                     <div class="panel-sub">
-                        Colle une URL YouTube pour lancer la transcription.
+                        Colle une URL YouTube pour extraire les sous-titres
+                        disponibles.
                     </div>
                     <div class="card">
                         <div class="field">
@@ -83,48 +84,18 @@
                             <input
                                 type="text"
                                 id="single-url"
-                                placeholder="https://www.youtube.com/watch?v=..."
+                                placeholder="https://www.youtube.com/watch?v=…"
+                                onkeydown="
+                                    if (event.key === 'Enter') enqueueSingle();
+                                "
                             />
-                        </div>
-                        <div class="row row-2">
-                            <div>
-                                <label>Modèle Whisper</label>
-                                <select id="single-model">
-                                    <option value="tiny">
-                                        tiny — très rapide
-                                    </option>
-                                    <option value="base">base</option>
-                                    <option value="small" selected>
-                                        small — recommandé
-                                    </option>
-                                    <option value="medium">
-                                        medium — précis (5 Go VRAM)
-                                    </option>
-                                    <option value="large-v3">
-                                        large-v3 — max (10 Go VRAM)
-                                    </option>
-                                </select>
-                            </div>
-                            <div>
-                                <label>Langue</label>
-                                <select id="single-lang">
-                                    <option value="auto">auto-détection</option>
-                                    <option value="fr">Français</option>
-                                    <option value="en">English</option>
-                                    <option value="es">Español</option>
-                                    <option value="de">Deutsch</option>
-                                    <option value="it">Italiano</option>
-                                    <option value="pt">Português</option>
-                                    <option value="ja">日本語</option>
-                                    <option value="zh">中文</option>
-                                </select>
-                            </div>
                         </div>
                         <button
                             class="btn btn-primary"
                             onclick="enqueueSingle()"
                         >
-                            <svg><use href="#ic-zap" /></svg> Transcrire
+                            <svg><use href="#ic-zap" /></svg> Extraire les
+                            sous-titres
                         </button>
                     </div>
                 </div>
@@ -143,31 +114,10 @@
                                 type="text"
                                 id="channel-url"
                                 placeholder="https://www.youtube.com/@NomDeLaChaine"
+                                onkeydown="
+                                    if (event.key === 'Enter') fetchChannel();
+                                "
                             />
-                        </div>
-                        <div class="row row-2">
-                            <div>
-                                <label>Modèle Whisper</label>
-                                <select id="channel-model">
-                                    <option value="tiny">tiny</option>
-                                    <option value="base">base</option>
-                                    <option value="small" selected>
-                                        small — recommandé
-                                    </option>
-                                    <option value="medium">medium</option>
-                                    <option value="large-v3">large-v3</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label>Langue</label>
-                                <select id="channel-lang">
-                                    <option value="auto">auto-détection</option>
-                                    <option value="fr">Français</option>
-                                    <option value="en">English</option>
-                                    <option value="es">Español</option>
-                                    <option value="de">Deutsch</option>
-                                </select>
-                            </div>
                         </div>
                         <button
                             class="btn btn-primary"
@@ -181,7 +131,6 @@
 
                     <div id="channel-results" style="display: none">
                         <div class="channel-toolbar">
-                            <strong id="channel-name"></strong>
                             <span id="channel-count"></span>
                             <button
                                 class="btn btn-ghost btn-sm"
@@ -208,7 +157,7 @@
                                 onclick="enqueueBatch()"
                                 disabled
                             >
-                                <svg><use href="#ic-zap" /></svg> Transcrire la
+                                <svg><use href="#ic-zap" /></svg> Extraire la
                                 sélection
                             </button>
                         </div>
@@ -219,7 +168,7 @@
                 <div class="panel" id="panel-queue">
                     <div class="panel-title">File d'attente</div>
                     <div class="panel-sub">
-                        Progression en temps réel de toutes les transcriptions.
+                        Progression en temps réel de toutes les extractions.
                     </div>
                     <div class="job-list" id="job-list">
                         <div class="empty">
@@ -308,7 +257,6 @@
         </div>
 
         <script>
-            // Charge icons.svg et l'injecte dans le DOM pour que les <use href="#..."> fonctionnent
             fetch("/static/icons.svg")
                 .then((r) => r.text())
                 .then((svg) => {
